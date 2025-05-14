@@ -1,22 +1,23 @@
-#include <stdio.h>               // Biblioteca padrão para entrada e saída
-#include <string.h>              // Biblioteca manipular strings
-#include <stdlib.h>              // funções para realizar várias operações, incluindo alocação de memória dinâmica (malloc)
-#include "pico/stdlib.h"         // Biblioteca da Raspberry Pi Pico para funções padrão (GPIO, temporização, etc.)
-#include "hardware/pio.h"        // Biblioteca da Raspberry Pi Pico para PIO
+// Bibliotecas Utilizadas
+#include <stdio.h>               
+#include <string.h>           
+#include <stdlib.h>              
+#include "pico/stdlib.h"       
+#include "hardware/pio.h"      
 #include "lib/ws2812.pio.h"
-#include "pico/cyw43_arch.h"     // Biblioteca para arquitetura Wi-Fi da Pico com CYW43  
-#include "lwip/pbuf.h"           // Lightweight IP stack - manipulação de buffers de pacotes de rede
-#include "lwip/tcp.h"            // Lightweight IP stack - fornece funções e estruturas para trabalhar com o protocolo TCP
-#include "lwip/netif.h"          // Lightweight IP stack - fornece funções e estruturas para trabalhar com interfaces de rede (netif)
+#include "pico/cyw43_arch.h"    
+#include "lwip/pbuf.h"       
+#include "lwip/tcp.h"           
+#include "lwip/netif.h"          
 
 // Credenciais WIFI 
-#define WIFI_SSID "M34 de Victor"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "SEU_SSID"
+#define WIFI_PASSWORD "SUA_SENHA"
 
 // Definição dos pinos dos LEDs
-#define led_b 12                 // GPIO12 - LED azul
-#define led_g 11                // GPIO11 - LED verde
-#define led_r 13                  // GPIO13 - LED vermelho
+#define led_b 12                 
+#define led_g 11              
+#define led_r 13               
 
 // Definição de parâmetros para a matriz de LEDS
 #define NUM_PIXELS 25 // Número de LEDs na matriz 
@@ -27,7 +28,7 @@ uint32_t led_buffer[NUM_PIXELS];
 
 // Protótipos
 void gpio_setup(void); // Inicializar os Pinos GPIO para acionamento dos LEDs da BitDogLab
-void ws2812_setup();
+void ws2812_setup(); // Configura a matriz de LEDs
 void user_request(char **request); // Tratamento do request do usuário
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err); // Função de callback ao aceitar conexões TCP
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err); // Função de callback para processar requisições HTTP
@@ -125,7 +126,6 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
     return ERR_OK;
 }
 
-// Função que processa os requests e altera apenas os LEDs da área desejada
 void user_request(char **request) {
     if (strstr(*request, "GET /quarto_on") != NULL) {
 
@@ -170,7 +170,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
 
     printf("Request: %s\n", request);
 
-    // Tratamento de request - Controle dos LEDs
+    // Tratamento dos requests
     user_request(&request);
     
     // Cria a resposta HTML
