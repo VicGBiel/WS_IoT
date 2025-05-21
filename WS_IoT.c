@@ -1,9 +1,12 @@
 // Bibliotecas Utilizadas
 #include <stdio.h>               
 #include <string.h>           
-#include <stdlib.h>              
-#include "pico/stdlib.h"       
-#include "hardware/pio.h"      
+#include <stdlib.h>        
+#include "pico/stdlib.h"     
+#include "pico/bootrom.h"  
+#include "hardware/pio.h"   
+#include "hardware/pwm.h"      
+#include "hardware/adc.h"    
 #include "lib/ws2812.pio.h"
 #include "pico/cyw43_arch.h"    
 #include "lwip/pbuf.h"       
@@ -11,8 +14,8 @@
 #include "lwip/netif.h"          
 
 // Credenciais WIFI 
-#define WIFI_SSID "SEU_SSID"
-#define WIFI_PASSWORD "SUA_SENHA"
+#define WIFI_SSID "bythesword [2.4GHz]"
+#define WIFI_PASSWORD "30317512"
 
 // Definição dos pinos dos LEDs
 #define led_b 12                 
@@ -24,16 +27,35 @@
 #define IS_RGBW false // Define se os LEDs são RGBW ou apenas RGB
 #define WS2812_PIN 7 // Pino onde os LEDs WS2812 estão conectados
 
+// Definição de botões
+#define btn_b 6
+
+// Definição do buzzer
+#define buzzer_pin_l 10
+
+// Variáveis Globais
+static volatile uint32_t last_time = 0; // Armazena o tempo do último evento (em microssegundos)
+uint32_t cor_quarto = 0x101010;  // Cor padrão (branco)
+uint32_t cor_sala = 0x101010;
+uint32_t cor_ext = 0x101010;
 uint32_t led_buffer[NUM_PIXELS];
+bool estado_quarto = false;
+bool estado_sala = false;
+bool estado_ext = false;
+bool estado_cortina = false;
+uint slice_buz;
 
 // Protótipos
 void gpio_setup(void); // Inicializar os Pinos GPIO para acionamento dos LEDs da BitDogLab
 void ws2812_setup(); // Configura a matriz de LEDs
+void buzzer_setup(); // Configura os buzzer via pwm
+void gpio_irq_handler(uint gpio, uint32_t events); // Tratamento de interrupções
 void user_request(char **request); // Tratamento do request do usuário
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err); // Função de callback ao aceitar conexões TCP
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err); // Função de callback para processar requisições HTTP
 void update_leds(); // Função para atualizar os LEDs
 void set_leds(int start, int end, uint32_t color); // Função auxiliar para definir o estado de uma faixa de LEDs
+float temp_read(void); // Lê a temperatura interna do dispositivo
 
 // Função principal
 int main()
@@ -41,6 +63,13 @@ int main()
     stdio_init_all();
     gpio_setup();
     ws2812_setup();
+    buzzer_setup();
+
+    adc_init();
+    adc_set_temp_sensor_enabled(true);
+
+    // Configuração de interrupção
+    gpio_set_irq_enabled_with_callback(btn_b, GPIO_IRQ_EDGE_FALL,true, &gpio_irq_handler);    
 
     //Inicializa a arquitetura do cyw43
     while (cyw43_arch_init())
@@ -64,7 +93,7 @@ int main()
     {
         printf("IP do dispositivo: %s\n", ipaddr_ntoa(&netif_default->ip_addr));
     }
-
+    
     // Configura o servidor TCP - cria novos PCBs TCP. É o primeiro passo para estabelecer uma conexão TCP.
     struct tcp_pcb *server = tcp_new();
     if (!server)
@@ -111,6 +140,12 @@ void gpio_setup(void){
     gpio_init(led_r);
     gpio_set_dir(led_r, GPIO_OUT);
     gpio_put(led_r, false);
+
+    // Para ser utilizado o modo BOOTSEL com botão B
+    gpio_init(btn_b);
+    gpio_set_dir(btn_b, GPIO_IN);
+    gpio_pull_up(btn_b);
+
 }
 
 void ws2812_setup(){
@@ -120,6 +155,27 @@ void ws2812_setup(){
     ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
 }
 
+void buzzer_setup(){
+    gpio_set_function(buzzer_pin_l, GPIO_FUNC_PWM);
+    slice_buz = pwm_gpio_to_slice_num(buzzer_pin_l);
+    pwm_set_clkdiv(slice_buz, 40);
+    pwm_set_wrap(slice_buz, 12500);
+    pwm_set_enabled(slice_buz, true);  
+}
+
+void gpio_irq_handler(uint gpio, uint32_t events){
+    uint32_t current_time = to_us_since_boot(get_absolute_time());
+
+    if(current_time - last_time > 200000){
+        last_time = current_time;
+        
+        if (gpio == btn_b){
+            reset_usb_boot(0,0);
+        }
+    }
+
+}
+
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     tcp_recv(newpcb, tcp_server_recv);
@@ -127,29 +183,49 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 }
 
 void user_request(char **request) {
-    if (strstr(*request, "GET /quarto_on") != NULL) {
-
-        set_leds(13, 16, 0x101010); // LEDs do quarto (13 a 16)
-        set_leds(23, 24, 0x101010); // LEDs do quarto (23 e 24)
-    } 
-    else if (strstr(*request, "GET /quarto_off") != NULL) {
-        set_leds(13, 16, 0x000000); // Desligar LEDs do quarto (13 a 16)
-        set_leds(23, 24, 0x000000); // Desligar LEDs do quarto (23 e 24)
-    } 
-    else if (strstr(*request, "GET /sala_on") != NULL) {
-        set_leds(10, 12, 0x101010); // LEDs da sala (10 a 12)
-        set_leds(17, 22, 0x101010); // LEDs da sala (17 a 22)
-    } 
-    else if (strstr(*request, "GET /sala_off") != NULL) {
-        set_leds(10, 12, 0x000000); // Desligar LEDs da sala (10 a 12)
-        set_leds(17, 22, 0x000000); // Desligar LEDs da sala (17 a 22)
-    } 
-    else if (strstr(*request, "GET /ext_on") != NULL) {
-        set_leds(0, 9, 0x101010); // LEDs da área externa (0 a 9)
-    } 
-    else if (strstr(*request, "GET /ext_off") != NULL) {
-        set_leds(0, 9, 0x000000); // Desligar LEDs da área externa (0 a 9)
+    if (strstr(*request, "GET /set_color_quarto") != NULL) {
+        estado_quarto = !estado_quarto;
+        char *color_param = strstr(*request, "cor=%23"); // %23 é '#'
+        if (color_param) {
+            unsigned int r, g, b;
+            if (sscanf(color_param, "cor=%%23%02x%02x%02x", &g, &r, &b) == 3) {
+                cor_quarto = (r << 16) | (g << 8) | b;
+                set_leds(13, 16, estado_quarto ? cor_quarto : 0x000000); // LEDs do quarto
+                set_leds(23, 24, estado_quarto ? cor_quarto : 0x000000);
+            }
+        }
     }
+    else if (strstr(*request, "GET /set_color_sala") != NULL) {
+        estado_sala = !estado_sala;
+        char *color_param = strstr(*request, "cor=%23");
+        if (color_param) {
+            unsigned int r, g, b;
+            if (sscanf(color_param, "cor=%%23%02x%02x%02x", &g, &r, &b) == 3) {
+                cor_sala = (r << 16) | (g << 8) | b;
+                set_leds(10, 12, estado_sala ? cor_sala : 0x000000);
+                set_leds(17, 22, estado_sala ? cor_sala : 0x000000);
+            }
+        }             
+    }
+    else if (strstr(*request, "GET /set_color_ext") != NULL) {
+        estado_ext = !estado_ext;
+        char *color_param = strstr(*request, "cor=%23");
+        if (color_param) {
+            unsigned int r, g, b;
+            if (sscanf(color_param, "cor=%%23%02x%02x%02x", &g, &r, &b) == 3) {
+                cor_ext = (r << 16) | (g << 8) | b;
+                set_leds(0, 9, estado_ext ? cor_ext : 0x000000);
+                set_leds(0, 9, estado_ext ? cor_ext : 0x000000);
+            }
+        }
+    }
+    else if (strstr(*request, "GET /toggle_cur") != NULL) {
+        estado_cortina = !estado_cortina;
+        pwm_set_gpio_level(buzzer_pin_l, 60);
+        sleep_ms(1000);
+        pwm_set_gpio_level(buzzer_pin_l, 0);
+    }
+
     
     update_leds(); // Atualiza todos os LEDs de acordo com o buffer atualizado
 }
@@ -170,6 +246,10 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
 
     printf("Request: %s\n", request);
 
+    // Leitura da temperatura
+    float fTemp = temp_read();
+    printf ("Temperatura interna: %.2f °C", fTemp);
+    
     // Tratamento dos requests
     user_request(&request);
     
@@ -177,31 +257,39 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     char html[1024];
 
     // Instruções html do webserver
-    snprintf(html, sizeof(html), // Formatar uma string e armazená-la em um buffer de caracteres
-             "HTTP/1.1 200 OK\r\n"
-             "Content-Type: text/html\r\n"
-             "\r\n"
-             "<!DOCTYPE html>\n"
-             "<html>\n"
-             "<head>\n"
-             "<title> AutomaTech </title>\n"
-             "<style>\n"
-             "body { background-color:rgb(73, 233, 145); font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }\n"
-             "h1 { font-size: 64px; margin-bottom: 30px; }\n"
-             "button { background-color: rgb(255, 255, 255); font-size: 36px; margin: 10px; padding: 20px 40px; border-radius: 10px; }\n"
-             "</style>\n"
-             "</head>\n"
-             "<body>\n"
-             "<h1>AutomaTech</h1>\n"
-             "<form action=\"./quarto_on\"><button>Ligar Quarto</button></form>\n"
-             "<form action=\"./quarto_off\"><button>Desligar Quarto</button></form>\n"
-             "<form action=\"./sala_on\"><button>Ligar Sala</button></form>\n"
-             "<form action=\"./sala_off\"><button>Desligar Sala</button></form>\n"
-             "<form action=\"./ext_on\"><button>Ligar Área Externa</button></form>\n"
-             "<form action=\"./ext_off\"><button>Desligar Área Externa</button></form>\n"
-             "</body>\n"
-             "</html>\n"
-            );
+    snprintf(html, sizeof(html),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html; charset=UTF-8\r\n"
+        "\r\n"
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
+        "<title>AutomaTech</title>"
+        "<style>"
+        "body{background-color:rgb(41,21,132);font-family:Arial,sans-serif;color:white;text-align:center;margin-top:20px;}"
+        "h1{font-size:44px;margin-bottom:15px;}"
+        "h2{font-size:24px;margin-bottom:5px;}"
+        "button{background-color:white;font-size:18px;margin:10px;padding:15px;border-radius:10px;}"
+        "</style></head><body>"
+        "<h1>AutomaTech</h1>"
+        "<h2>Iluminação</h2>"
+        "<form action=\"./set_color_quarto\" method=\"get\">"
+        "<input type=\"color\" name=\"cor\" value=\"#101010\">"
+        "<button type=\"submit\">Quarto ON/OFF</button>"
+        "</form>"
+        "<form action=\"./set_color_sala\" method=\"get\">"
+        "<input type=\"color\" name=\"cor\" value=\"#101010\">"
+        "<button type=\"submit\">Sala ON/OFF</button>"
+        "</form>"
+        "<form action=\"./set_color_ext\" method=\"get\">"
+        "<input type=\"color\" name=\"cor\" value=\"#101010\">"
+        "<button type=\"submit\">Área externa ON/OFF</button>"
+        "</form>"
+        "<h2>Cortinas</h2>"
+        "<form action=\"./toggle_cur\">"
+        "<button>Cortina ON/OFF</button>"
+        "</form>"
+        "</body></html>"
+    );
+
 
     // Escreve dados para envio (mas não os envia imediatamente).
     tcp_write(tpcb, html, strlen(html), TCP_WRITE_FLAG_COPY);
@@ -228,3 +316,12 @@ void set_leds(int start, int end, uint32_t color) {
         led_buffer[i] = color;
     }
 }
+
+float temp_read(void){
+    adc_select_input(4);
+    uint16_t raw_value = adc_read();
+    const float conversion_factor = 3.3f / (1 << 12);
+    float temperature = 27.0f - ((raw_value * conversion_factor) - 0.706f) / 0.001721f;
+        return temperature;
+}
+
