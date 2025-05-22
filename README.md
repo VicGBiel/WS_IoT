@@ -34,10 +34,6 @@ A interface é acessada via o IP local do dispositivo, exibido após a conexão 
 
 ## Demonstração em Vídeo
 
-*Insira aqui o link do vídeo demonstrativo do projeto.*
-
-Exemplo:
-
 ```
-https:
+https://youtu.be/uc7RmOOU7_o
 ```
